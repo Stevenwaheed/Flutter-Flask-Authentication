@@ -208,7 +208,7 @@ class ECG:
         filtered_data = heartpy.filtering.filter_signal(signals.iloc[:, 1], filtertype='bandpass', cutoff=[2.5, 40], sample_rate=500, order=3)
         corrected_data = heartpy.hampel_correcter(filtered_data, sample_rate=500)
         final_signal = np.array(filtered_data)+np.array(corrected_data)
-       
+        
         filtered_data2= heartpy.filtering.filter_signal(final_signal, filtertype='bandpass', cutoff=[3, 20], sample_rate=500, order=3)
         corrected_data2 = heartpy.filtering.hampel_correcter(filtered_data2, sample_rate=500)
         final_signal2 = np.array(filtered_data2) + np.array(corrected_data2)
@@ -537,6 +537,13 @@ class sql_ecg():
         connection.commit()
 
         cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS Results(
+                        Result TEXT)
+                    ''')
+        
+        connection.commit()
+        
+        cursor.execute('''
                     CREATE TABLE IF NOT EXISTS Identification_ECG_Features(
                         PR_Distances NUMERIC,
                         PR_Slope NUMERIC,
@@ -728,6 +735,7 @@ api = Api(app)
     this function takes a json data for ECG data and convert it to dict datatype. 
     return a {dataframe of the ECG data}.
 '''
+###########################     we don't use it in the new update for futter    ###########################
 def convert_json_dict(ecg_json):
     ecg_dict = {}
     for column in ecg_json.keys():
@@ -741,9 +749,16 @@ def convert_data_new(data):
     signal = np.array(data[11:-1][0][4:].split('\n'))
     new_signal = ' '.join(signal).split()
     final_signal = np.array(new_signal).astype('float')
-    
+
     return final_signal
 
+
+def convert_data_login(data):
+    signal = np.array(data.split('\n')[14:-1])
+    new_signal = ' '.join(signal).split()
+    final_signal = np.array(new_signal).astype('float')
+    
+    return final_signal
 
 
 @app.errorhandler(400)
@@ -841,7 +856,7 @@ def identification_store():
     #     all_features = extracted_features
     # else:
     #     all_features = pd.concat([all_features, extracted_features])
-        
+
     # print(all_features)
     
     return ' '
@@ -917,9 +932,6 @@ def get():
 
 
 
-
-
-
 ########################################################################################################################
 #########################################            Authentication            #########################################
 ########################################################################################################################
@@ -928,29 +940,50 @@ def get():
     this API function task is to take a person's Name and Phone Number, 
     then get all data about that person from the database.
 '''
-@app.route('/authentication/login', methods=['POST', 'GET'])
+@app.route('/authentication/login', methods=['POST'])
 def authentication_login():
-    global login_data
-
-    json_data = json.loads(request.data.decode('utf-8'))
-
-    connection = sqlite3.connect('Heartizm.db')
-    # print(json_data)
-    cursor = connection.cursor()
+    global predictions
     
+    json_data = json.loads(request.data.decode('utf-8'))
+    
+    connection = sqlite3.connect('Heartizm.db')
+    cursor = connection.cursor()
+
     cursor.execute('SELECT * FROM Person WHERE Name="'+ json_data['UserName'] +'" AND phone_number="'+ json_data['PhoneNumber'] +'"')
     login_data = cursor.fetchall()
-    
+
     connection.commit()
     connection.close()
     
-    if len(login_data)>0:
-        return jsonify({'Result':'Done'})
-    else:
-        return jsonify({'Result':'Not Exist'})
-    
-    
+    if len(login_data) > 0:
+        
+        if len(json_data['csv'])<1:
+            print('empty')
+            return jsonify({'Result':'you forget to upload a file'})
+        else:
+            ExtraTree_model = joblib.load(login_data[0][-1])
+            
+            ecg_data = convert_data_login(json_data['csv'])
+            ecg_df = pd.DataFrame(ecg_data, columns=['data'])
 
+            ecg_heart = ECG(ecg_df)
+            extracted_features = ecg_heart.feature_exctraction()
+            extracted_features.dropna(inplace=True)
+
+            preds = ExtraTree_model.predict(extracted_features)
+            print(preds)
+
+            predictions = pd.DataFrame(columns=['Results'])
+            predictions['Results'] = preds
+            if predictions.value_counts().index[0][0] == 0:
+                return jsonify({'UserName':json_data['UserName'], 'PhoneNumber':json_data['PhoneNumber'], 'Result':'Not Authenticate'})
+            else:
+                return jsonify({'UserName':json_data['UserName'], 'PhoneNumber':json_data['PhoneNumber'], 'Result':'Authenticate'})
+
+    else:
+        return jsonify({'UserName':json_data['UserName'], 'PhoneNumber':json_data['PhoneNumber'], 'Result':'Not Exist...'})
+       
+       
 
 '''
     this API function task is to take a person's Name, Email and Phone Number,
@@ -1018,15 +1051,11 @@ def authentication_store():
         X = df.iloc[:, :-1]
         y = df.iloc[:, -1]
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+        X_train, _, y_train, _ = train_test_split(X, y, test_size=0.3)
 
         ExtraTree = ExtraTreesClassifier(n_estimators=200, criterion='entropy', verbose=2)
         ExtraTree.fit(X_train, y_train)
 
-        # ExtraTree_preds = ExtraTree.predict(X_test)
-
-        # print(f'- Accuracy Score:', accuracy_score(ExtraTree_preds, y_test.values))
-        
         person.insert_model(ExtraTree)
         print('Saved ...')
         
@@ -1035,72 +1064,79 @@ def authentication_store():
 
 
 
-'''
-    this API function task is to train a new model with the main 30 features.
-    save the model in the database in the same row of the authenticated person.
-    and return the {ML model performance}.
-'''
-@app.route('/authentication/train', methods=['GET'])
-def authentication_train():
-    global other_users_features
-    global person
+# '''
+#     this API function task is to train a new model with the main 30 features.
+#     save the model in the database in the same row of the authenticated person.
+#     and return the {ML model performance}.
+# '''
+# @app.route('/authentication/train', methods=['GET'])
+# def authentication_train():
+#     global other_users_features
+#     global person
     
-    print(person.person_ID, '    ', person.person_name)
-    df = other_users_features.dropna()
-    print(other_users_features)
+#     print(person.person_ID, '    ', person.person_name)
+#     df = other_users_features.dropna()
+#     print(other_users_features)
     
-    X = df.iloc[:, :-1]
-    y = df.iloc[:, -1]
+#     X = df.iloc[:, :-1]
+#     y = df.iloc[:, -1]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
-    ExtraTree = ExtraTreesClassifier(n_estimators=200, criterion='entropy', verbose=2)
-    ExtraTree.fit(X_train, y_train)
+#     ExtraTree = ExtraTreesClassifier(n_estimators=200, criterion='entropy', verbose=2)
+#     ExtraTree.fit(X_train, y_train)
 
-    ExtraTree_preds = ExtraTree.predict(X_test)
+#     ExtraTree_preds = ExtraTree.predict(X_test)
     
-    person.insert_model(ExtraTree)
-    print('Saved ...')
+#     person.insert_model(ExtraTree)
+#     print('Saved ...')
     
-    return jsonify({'Performance': f'- Accuracy Score: {accuracy_score(ExtraTree_preds, y_test.values)}'
-                    +f'\n- F1 Score: {f1_score(ExtraTree_preds, y_test.values, average="weighted")}'
-                    +f'\n- Recall Score: {recall_score(ExtraTree_preds, y_test.values, average="weighted")}'
-                    +f'\n- Precision Score: {precision_score(ExtraTree_preds, y_test.values, average="weighted")}'})
+#     return jsonify({'Performance': f'- Accuracy Score: {accuracy_score(ExtraTree_preds, y_test.values)}'
+#                     +f'\n- F1 Score: {f1_score(ExtraTree_preds, y_test.values, average="weighted")}'
+#                     +f'\n- Recall Score: {recall_score(ExtraTree_preds, y_test.values, average="weighted")}'
+#                     +f'\n- Precision Score: {precision_score(ExtraTree_preds, y_test.values, average="weighted")}'})
 
 
-'''
-    this API function task is to take the ECG record from the user, extract the main 30 features,
-    then send them to the ML model for prediction.
+# '''
+#     this API function task is to take the ECG record from the user, extract the main 30 features,
+#     then send them to the ML model for prediction.
     
-    return the {predictions}.
-'''
-@app.route('/authentication/authenticate', methods=['POST', 'GET'])
-def predict_authenticate():
-    global predictions
-    # global person
-    global login_data
+#     return the {predictions}.
+# '''
+# @app.route('/authentication/authenticate', methods=['POST', 'GET'])
+# def predict_authenticate():
+#     global predictions
+#     # global person
+#     global login_data
     
-    # fetched_data = person.fetch('*', 'Person')
-    print(login_data[0][-1])
+#     # fetched_data = person.fetch('*', 'Person')
+#     print(login_data[0][-1])
     
-    ExtraTree_model = joblib.load(login_data[0][-1])
+#     ExtraTree_model = joblib.load(login_data[0][-1])
     
-    json_data = json.loads(request.data.decode('utf-8'))
-    ecg_df = convert_json_dict(json_data)
-    ecg_heart = ECG(ecg_df)
-    extracted_features = ecg_heart.feature_exctraction()
-    extracted_features.dropna(inplace=True)
+#     json_data = json.loads(request.data.decode('utf-8'))
     
-    preds = ExtraTree_model.predict(extracted_features)
-    print(preds)
-    
-    predictions = pd.DataFrame(columns=['Results'])
-    predictions['Results'] = preds
-    
-    if predictions.value_counts().index[0][0] == 0:
-        return jsonify({'Result':'Not Authenticated'})
-    else:
-        return jsonify({'Result':'Authenticated'})
+#     if len(json_data['csv'])<1:
+#         print('empty')
+#         return jsonify({'Result':'you forgot to upload the file'})
+#     else:
+#         ecg_data = convert_data_new(json_data['csv'][0])
+#         ecg_df = pd.DataFrame(ecg_data, columns=['data'])
+        
+#         ecg_heart = ECG(ecg_df)
+#         extracted_features = ecg_heart.feature_exctraction()
+#         extracted_features.dropna(inplace=True)
+        
+#         preds = ExtraTree_model.predict(extracted_features)
+#         print(preds)
+        
+#         predictions = pd.DataFrame(columns=['Results'])
+#         predictions['Results'] = preds
+        
+#         if predictions.value_counts().index[0][0] == 0:
+#             return jsonify({'Result':'Not Authenticated'})
+#         else:
+#             return jsonify({'Result':'Authenticated'})
 
 
 # '''
@@ -1114,6 +1150,22 @@ def predict_authenticate():
 #         return jsonify({'Result':'Not Authenticated'})
 #     else:
 #         return jsonify({'Result':'Authenticated'})
+
+
+# @app.route('/authentication/authenticate', methods=['GET'])
+# def get_authenticate():
+#     connection = sqlite3.connect('Heartizm.db')
+#     cursor = connection.cursor()
+
+#     cursor.execute('SELECT * FROM Results')
+#     login_data = cursor.fetchall()
+    
+#     print('Results: ', login_data)
+    
+#     connection.commit()
+#     connection.close()
+    
+#     return jsonify({'Result': login_data[0][0]})
 
 
 app.run(host='0.0.0.0', port=5000)
