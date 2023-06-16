@@ -1,5 +1,7 @@
 <h1 align="center" id="title">Flutter-Flask-Authentication</h1>
 
+<p id="description">Using ECG Heart Biometrics to identify people through their unique heart wave signals. Heart biometrics are preferable for continuous authentication due to their capability of providing a new biometric sample periodically. ECG signals are recorded through smart devices and sent to our cloud database applying dedicated Machine Learning algorithms and giving the user feedback on the success or failure authentication process.</p>
+
 <h2>🚀 Demo</h2>
 
 [Streamlit Website prototype Video](https://drive.google.com/file/d/14tA3XpfSSNZMkiGq7X63xCwji1KOntRT/view?usp=sharing)
