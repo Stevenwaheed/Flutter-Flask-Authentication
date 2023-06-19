@@ -18,7 +18,7 @@ from sklearn.model_selection import train_test_split
 
 # Database packages
 import sqlite3
-import _sqlite3
+# import _sqlite3
 
 # others
 import joblib
